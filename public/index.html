@@ -1,0 +1,421 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Downloader Pro</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans pb-12">
+  
+  <div class="max-w-4xl mx-auto px-3 sm:px-6 py-6">
+    
+    <!-- Header -->
+    <header class="text-center mb-6">
+      <h1 class="text-2xl sm:text-4xl font-extrabold text-red-500 tracking-tight flex items-center justify-center">
+        YouTube Downloader
+      </h1>
+      <p class="text-slate-400 text-xs sm:text-sm mt-1">Dán Link xem trực tiếp hoặc Nhập từ khóa tìm kiếm</p>
+    </header>
+
+    <!-- Ô Tìm kiếm & Dán Link -->
+    <div class="bg-slate-900 p-2 sm:p-3 rounded-2xl border border-slate-800 shadow-xl mb-6 flex flex-col sm:flex-row gap-2">
+      <input 
+        type="text" 
+        id="searchInput" 
+        placeholder="Dán link YouTube (Video / Playlist) hoặc nhập từ khóa..."
+        class="w-full px-4 py-3 rounded-xl bg-slate-800/80 text-white placeholder-slate-500 border border-slate-700/50 focus:outline-none focus:border-red-500 text-sm sm:text-base"
+        onkeyup="if(event.key === 'Enter') processInput(true)"
+      />
+      <button 
+        onclick="processInput(true)"
+        class="w-full sm:w-auto px-6 py-3 bg-red-600 hover:bg-red-700 font-bold rounded-xl text-sm sm:text-base transition shrink-0"
+      >
+        Xử lý
+      </button>
+    </div>
+
+    <!-- Thông báo trạng thái -->
+    <div id="status" class="text-center text-slate-400 my-4 text-sm hidden">Đang phân tích...</div>
+
+    <!-- Khung hiển thị Video trực tiếp khi dán Link đơn -->
+    <div id="directVideoContainer" class="hidden bg-slate-900 rounded-2xl p-4 border border-slate-800 mb-8 shadow-2xl">
+      <div class="flex flex-col lg:flex-row gap-6">
+        <!-- Player xem trước -->
+        <div class="w-full lg:w-1/2">
+          <div class="relative pt-[56.25%] rounded-xl overflow-hidden bg-black">
+            <iframe id="directIframe" class="absolute top-0 left-0 w-full h-full" frameborder="0" allowfullscreen></iframe>
+          </div>
+          <h2 id="directTitle" class="font-bold text-base mt-3 text-slate-200 line-clamp-2"></h2>
+          <p id="directAuthor" class="text-xs text-slate-400 mt-1"></p>
+        </div>
+
+        <!-- Khung cấu hình Tải xuống -->
+        <div class="w-full lg:w-1/2 flex flex-col justify-between bg-slate-950/50 p-4 rounded-xl border border-slate-800/80">
+          <h3 class="font-bold text-sm text-red-400 mb-3 border-b border-slate-800 pb-2">Tùy Chọn Tải Xuống</h3>
+          
+          <div class="space-y-4 text-xs sm:text-sm">
+            <!-- Format -->
+            <div>
+              <label class="block text-slate-400 mb-1">Định dạng:</label>
+              <div class="grid grid-cols-2 gap-2">
+                <button id="btnFmtMp3" onclick="selectFormat('mp3')" class="py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300">MP3 (Audio)</button>
+                <button id="btnFmtMp4" onclick="selectFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">MP4 (Video)</button>
+              </div>
+            </div>
+
+            <!-- Quality -->
+            <div>
+              <label class="block text-slate-400 mb-1">Chất lượng:</label>
+              <select id="qualitySelect" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                <option value="320k">320 kbps (Cao nhất)</option>
+                <option value="128k">128 kbps (Tiết kiệm dung lượng)</option>
+              </select>
+            </div>
+
+            <!-- Trim Cut -->
+            <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-slate-300 font-semibold">Cắt đoạn nhạc/video</label>
+                <input type="checkbox" id="trimToggle" onchange="toggleTrimInputs()" class="w-4 h-4 accent-red-500 cursor-pointer">
+              </div>
+              <div id="trimInputs" class="grid grid-cols-2 gap-2 opacity-50 pointer-events-none transition">
+                <div>
+                  <span class="text-[10px] text-slate-500">Bắt đầu (HH:MM:SS)</span>
+                  <input type="text" id="trimStart" placeholder="00:00:00" class="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-center">
+                </div>
+                <div>
+                  <span class="text-[10px] text-slate-500">Kết thúc (HH:MM:SS)</span>
+                  <input type="text" id="trimEnd" placeholder="00:01:30" class="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-center">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Download Action -->
+          <button onclick="startDirectDownload()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl text-white mt-4 transition shadow-lg">
+            TẢI VỀ NGAY
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Kết quả Tìm kiếm / Danh sách Playlist -->
+    <div id="results" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6"></div>
+
+  </div>
+
+  <!-- Modal Tải Nhanh (Dành cho kết quả tìm kiếm) -->
+  <div id="downloadModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 hidden p-3" onclick="closeModalOnBackdrop(event)">
+    <div class="bg-slate-900 rounded-2xl max-w-lg w-full p-4 sm:p-6 border border-slate-800 shadow-2xl relative">
+      <button onclick="closeModal()" class="absolute top-3 right-3 text-slate-400 hover:text-white w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center">✕</button>
+      
+      <h3 id="modalTitle" class="font-bold text-sm sm:text-base pr-8 line-clamp-2 text-slate-200 mb-4"></h3>
+
+      <div class="space-y-4 text-xs sm:text-sm">
+        <div>
+          <label class="block text-slate-400 mb-1">Định dạng:</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="mBtnFmtMp3" onclick="selectModalFormat('mp3')" class="py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300">MP3</button>
+            <button id="mBtnFmtMp4" onclick="selectModalFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">MP4</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-400 mb-1">Chất lượng:</label>
+          <select id="mQualitySelect" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+            <option value="320k">320 kbps (Cao nhất)</option>
+            <option value="128k">128 kbps</option>
+          </select>
+        </div>
+
+        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-slate-300 font-semibold">Cắt đoạn nhạc/video</label>
+            <input type="checkbox" id="mTrimToggle" onchange="toggleModalTrimInputs()" class="w-4 h-4 accent-red-500">
+          </div>
+          <div id="mTrimInputs" class="grid grid-cols-2 gap-2 opacity-50 pointer-events-none">
+            <input type="text" id="mTrimStart" placeholder="00:00:00" class="bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-center">
+            <input type="text" id="mTrimEnd" placeholder="00:01:30" class="bg-slate-800 border border-slate-700 rounded p-1.5 text-xs text-center">
+          </div>
+        </div>
+      </div>
+
+      <button onclick="executeModalDownload()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl text-white mt-6 transition shadow-lg">
+        Tải Xuống
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let currentQuery = '';
+    let currentPage = 1;
+    let isLoading = false;
+    let hasMore = true;
+    
+    // State dữ liệu link trực tiếp
+    let activeDirectUrl = '';
+    let activeFormat = 'mp3';
+    
+    // State dữ liệu modal
+    let activeModalUrl = '';
+    let activeModalFormat = 'mp3';
+
+    // Bóc tách Video ID tức thì
+    function getYouTubeVideoId(url) {
+      const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+      const match = url.match(regExp);
+      return (match && match[2].length === 11) ? match[2] : null;
+    }
+
+    async function processInput(isNewSearch = true) {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+
+      const statusEl = document.getElementById('status');
+      const directContainer = document.getElementById('directVideoContainer');
+      const resultsEl = document.getElementById('results');
+
+      // Tối ưu load tức thì khi dán link Video đơn
+      if (query.startsWith('http://') || query.startsWith('https://')) {
+        if (!query.includes('list=')) {
+          const videoId = getYouTubeVideoId(query);
+
+          if (videoId) {
+            activeDirectUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            document.getElementById('directIframe').src = `https://www.youtube.com/embed/${videoId}`;
+            document.getElementById('directTitle').innerText = 'Đang tải thông tin...';
+            document.getElementById('directAuthor').innerText = '';
+            
+            resultsEl.innerHTML = '';
+            directContainer.classList.remove('hidden');
+            window.scrollTo({ top: 100, behavior: 'smooth' });
+
+            try {
+              const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+              if (oembedRes.ok) {
+                const data = await oembedRes.json();
+                document.getElementById('directTitle').innerText = data.title;
+                document.getElementById('directAuthor').innerText = data.author_name;
+              }
+            } catch (e) {
+              document.getElementById('directTitle').innerText = 'Video YouTube';
+            }
+            return;
+          }
+        }
+      }
+
+      // Xử lý Từ khóa tìm kiếm hoặc Playlist
+      if (isNewSearch) {
+        currentQuery = query;
+        currentPage = 1;
+        hasMore = true;
+        resultsEl.innerHTML = '';
+        directContainer.classList.add('hidden');
+      }
+
+      if (isLoading) return;
+      isLoading = true;
+
+      statusEl.innerText = 'Đang phân tích dữ liệu...';
+      statusEl.classList.remove('hidden');
+
+      try {
+        const res = await fetch(`/api/parse?q=${encodeURIComponent(currentQuery)}&page=${currentPage}`);
+        const data = await res.json();
+
+        statusEl.classList.add('hidden');
+        isLoading = false;
+
+        if (data.error) {
+          statusEl.innerText = data.error;
+          statusEl.classList.remove('hidden');
+          return;
+        }
+
+        if (data.type === 'video') {
+          setupDirectView(data.video);
+          return;
+        }
+
+        const videos = data.type === 'playlist' ? data.items : data.videos;
+        hasMore = data.type === 'search' ? data.hasMore : false;
+
+        if (!videos || videos.length === 0) {
+          statusEl.innerText = 'Không tìm thấy kết quả!';
+          statusEl.classList.remove('hidden');
+          return;
+        }
+
+        renderVideoCards(videos);
+        if (data.type === 'search') currentPage++;
+
+      } catch (err) {
+        statusEl.innerText = 'Lỗi kết nối máy chủ!';
+        isLoading = false;
+      }
+    }
+
+    function setupDirectView(video) {
+      activeDirectUrl = video.url;
+      document.getElementById('directIframe').src = `https://www.youtube.com/embed/${video.id}`;
+      document.getElementById('directTitle').innerText = video.title;
+      document.getElementById('directAuthor').innerText = video.author;
+      document.getElementById('directVideoContainer').classList.remove('hidden');
+      window.scrollTo({ top: 100, behavior: 'smooth' });
+    }
+
+    function selectFormat(fmt) {
+      activeFormat = fmt;
+      const btnMp3 = document.getElementById('btnFmtMp3');
+      const btnMp4 = document.getElementById('btnFmtMp4');
+      const qualitySelect = document.getElementById('qualitySelect');
+
+      if (fmt === 'mp3') {
+        btnMp3.className = 'py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300';
+        btnMp4.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
+        qualitySelect.innerHTML = `
+          <option value="320k">320 kbps (Cao nhất)</option>
+          <option value="128k">128 kbps (Tiết kiệm)</option>
+        `;
+      } else {
+        btnMp4.className = 'py-2 rounded-lg font-bold border border-blue-500/50 bg-blue-500/20 text-blue-300';
+        btnMp3.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
+        qualitySelect.innerHTML = `
+          <option value="1080p">1080p (Full HD)</option>
+          <option value="720p">720p (HD)</option>
+          <option value="480p">480p</option>
+        `;
+      }
+    }
+
+    function toggleTrimInputs() {
+      const isChecked = document.getElementById('trimToggle').checked;
+      const trimInputs = document.getElementById('trimInputs');
+      if (isChecked) {
+        trimInputs.classList.remove('opacity-50', 'pointer-events-none');
+      } else {
+        trimInputs.classList.add('opacity-50', 'pointer-events-none');
+      }
+    }
+
+    function startDirectDownload() {
+      const quality = document.getElementById('qualitySelect').value;
+      const isTrim = document.getElementById('trimToggle').checked;
+      const startTime = isTrim ? document.getElementById('trimStart').value.trim() : '';
+      const endTime = isTrim ? document.getElementById('trimEnd').value.trim() : '';
+
+      triggerDownload(activeDirectUrl, activeFormat, quality, startTime, endTime);
+    }
+
+    function renderVideoCards(videos) {
+      const resultsEl = document.getElementById('results');
+      videos.forEach(video => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900 rounded-2xl overflow-hidden border border-slate-800/80 flex flex-col justify-between hover:border-slate-700 transition shadow-lg';
+        card.innerHTML = `
+          <div>
+            <div class="relative cursor-pointer group" onclick="quickAnalyze('${video.url}')">
+              <img src="${video.thumbnail}" class="w-full h-40 sm:h-44 object-cover" />
+              <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                <span class="bg-red-600 text-white font-bold text-xs px-3 py-1.5 rounded-full shadow-lg">Xem / Tải ngay</span>
+              </div>
+              <span class="absolute bottom-2 right-2 bg-black/80 text-[10px] sm:text-xs px-2 py-0.5 rounded text-slate-300">${video.duration}</span>
+            </div>
+            <div class="p-3 sm:p-4">
+              <h3 class="font-semibold text-xs sm:text-sm line-clamp-2 mb-1 text-slate-200">${video.title}</h3>
+              <p class="text-[11px] text-slate-500">${video.author}</p>
+            </div>
+          </div>
+          <div class="p-3 sm:p-4 pt-0">
+            <button 
+              onclick="openDownloadModal('${video.url}', '${encodeURIComponent(video.title)}')" 
+              class="w-full py-2 bg-slate-800 hover:bg-red-600/20 hover:text-red-400 border border-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center">
+              Tùy chọn tải
+            </button>
+          </div>
+        `;
+        resultsEl.appendChild(card);
+      });
+    }
+
+    function quickAnalyze(url) {
+      document.getElementById('searchInput').value = url;
+      processInput(true);
+    }
+
+    function openDownloadModal(url, title) {
+      activeModalUrl = url;
+      document.getElementById('modalTitle').innerText = decodeURIComponent(title);
+      selectModalFormat('mp3');
+      document.getElementById('downloadModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('downloadModal').classList.add('hidden');
+    }
+
+    function closeModalOnBackdrop(e) {
+      if (e.target.id === 'downloadModal') closeModal();
+    }
+
+    function selectModalFormat(fmt) {
+      activeModalFormat = fmt;
+      const mBtnMp3 = document.getElementById('mBtnFmtMp3');
+      const mBtnMp4 = document.getElementById('mBtnFmtMp4');
+      const mQualitySelect = document.getElementById('mQualitySelect');
+
+      if (fmt === 'mp3') {
+        mBtnMp3.className = 'py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300';
+        mBtnMp4.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
+        mQualitySelect.innerHTML = `
+          <option value="320k">320 kbps (Cao nhất)</option>
+          <option value="128k">128 kbps</option>
+        `;
+      } else {
+        mBtnMp4.className = 'py-2 rounded-lg font-bold border border-blue-500/50 bg-blue-500/20 text-blue-300';
+        mBtnMp3.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
+        mQualitySelect.innerHTML = `
+          <option value="1080p">1080p (Full HD)</option>
+          <option value="720p">720p (HD)</option>
+          <option value="480p">480p</option>
+        `;
+      }
+    }
+
+    function toggleModalTrimInputs() {
+      const isChecked = document.getElementById('mTrimToggle').checked;
+      const inputs = document.getElementById('mTrimInputs');
+      if (isChecked) inputs.classList.remove('opacity-50', 'pointer-events-none');
+      else inputs.classList.add('opacity-50', 'pointer-events-none');
+    }
+
+    function executeModalDownload() {
+      const quality = document.getElementById('mQualitySelect').value;
+      const isTrim = document.getElementById('mTrimToggle').checked;
+      const startTime = isTrim ? document.getElementById('mTrimStart').value.trim() : '';
+      const endTime = isTrim ? document.getElementById('mTrimEnd').value.trim() : '';
+
+      triggerDownload(activeModalUrl, activeModalFormat, quality, startTime, endTime);
+      closeModal();
+    }
+
+    function triggerDownload(url, format, quality, startTime, endTime) {
+      let downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
+      if (startTime) downloadUrl += `&startTime=${encodeURIComponent(startTime)}`;
+      if (endTime) downloadUrl += `&endTime=${encodeURIComponent(endTime)}`;
+      
+      window.location.href = downloadUrl;
+    }
+
+    window.addEventListener('scroll', () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) {
+        if (currentQuery && hasMore && !isLoading && !currentQuery.startsWith('http')) {
+          processInput(false);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
