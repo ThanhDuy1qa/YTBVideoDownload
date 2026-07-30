@@ -15,11 +15,11 @@ function isYouTubeUrl(url) {
   return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url);
 }
 
-// Cấu hình tham số vượt rào chống Bot & Thêm JS Runtime
+// Cấu hình Client chuẩn cho yt-dlp khi dùng Cookie trên Cloud Server
 const BYPASS_BOT_ARGS = [
   '--js-runtimes', 'node',
-  '--extractor-args', 'youtube:player_client=android_creator,ios,mweb',
-  '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+  '--extractor-args', 'youtube:player_client=tv,mweb,web',
+  '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 ];
 
 // Nếu có file cookies.txt -> Thêm tham số --cookies
@@ -28,7 +28,7 @@ if (fs.existsSync(cookiesPath)) {
   console.log('🍪 Đã tìm thấy file cookies.txt, áp dụng xác thực YouTube...');
   BYPASS_BOT_ARGS.push('--cookies', cookiesPath);
 } else {
-  console.warn('⚠️ Không tìm thấy file cookies.txt! YouTube có thể chặn truy cập từ IP Cloud.');
+  console.warn('⚠️ Không tìm thấy file cookies.txt!');
 }
 
 // API Phân tích Link hoặc Tìm kiếm từ khóa
@@ -64,7 +64,7 @@ app.get('/api/parse', async (req, res) => {
               url: `https://www.youtube.com/watch?v=${item.id}`,
               title: item.title,
               thumbnail: item.thumbnails ? item.thumbnails[0]?.url : `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-              duration: item.duration ? `${Math.floor(item.duration / 60)}:${item.duration % 60}` : '--:--',
+              duration: item.duration ? `${Math.floor(item.duration / 60)}:${String(Math.floor(item.duration % 60)).padStart(2, '0')}` : '--:--',
               author: item.uploader || item.channel || 'YouTube'
             };
           });
@@ -78,7 +78,7 @@ app.get('/api/parse', async (req, res) => {
               url: info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
               title: info.title,
               thumbnail: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
-              duration: info.duration ? `${Math.floor(info.duration / 60)}:${info.duration % 60}` : '--:--',
+              duration: info.duration ? `${Math.floor(info.duration / 60)}:${String(Math.floor(info.duration % 60)).padStart(2, '0')}` : '--:--',
               author: info.uploader || info.channel || 'YouTube'
             }
           });
