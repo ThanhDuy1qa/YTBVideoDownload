@@ -1,9 +1,10 @@
 const express = require('express');
 const ytSearch = require('yt-search');
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
-// Lắng nghe cổng dynamic do Render cấp phát (hoặc 3000 khi chạy local)
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
@@ -14,11 +15,21 @@ function isYouTubeUrl(url) {
   return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url);
 }
 
-// Tham số vượt rào kiểm tra Bot của YouTube trên Cloud Hosting
+// Cấu hình tham số vượt rào chống Bot & Thêm JS Runtime
 const BYPASS_BOT_ARGS = [
-  '--extractor-args', 'youtube:player_client=ios,mweb,android',
+  '--js-runtimes', 'node',
+  '--extractor-args', 'youtube:player_client=android_creator,ios,mweb',
   '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
 ];
+
+// Nếu có file cookies.txt -> Thêm tham số --cookies
+const cookiesPath = path.join(__dirname, 'cookies.txt');
+if (fs.existsSync(cookiesPath)) {
+  console.log('🍪 Đã tìm thấy file cookies.txt, áp dụng xác thực YouTube...');
+  BYPASS_BOT_ARGS.push('--cookies', cookiesPath);
+} else {
+  console.warn('⚠️ Không tìm thấy file cookies.txt! YouTube có thể chặn truy cập từ IP Cloud.');
+}
 
 // API Phân tích Link hoặc Tìm kiếm từ khóa
 app.get('/api/parse', async (req, res) => {
