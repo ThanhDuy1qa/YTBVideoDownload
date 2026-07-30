@@ -3,7 +3,8 @@ const ytSearch = require('yt-search');
 const { spawn } = require('child_process');
 
 const app = express();
-const PORT = 3000;
+// Lắng nghe cổng dynamic do Render cấp phát (hoặc 3000 khi chạy local)
+const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 app.use(express.json());
@@ -13,6 +14,12 @@ function isYouTubeUrl(url) {
   return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url);
 }
 
+// Tham số vượt rào kiểm tra Bot của YouTube trên Cloud Hosting
+const BYPASS_BOT_ARGS = [
+  '--extractor-args', 'youtube:player_client=ios,mweb,android',
+  '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+];
+
 // API Phân tích Link hoặc Tìm kiếm từ khóa
 app.get('/api/parse', async (req, res) => {
   const query = req.query.q;
@@ -20,8 +27,14 @@ app.get('/api/parse', async (req, res) => {
 
   try {
     if (isYouTubeUrl(query)) {
-      // Dùng yt-dlp để phân tích thông tin đường dẫn trực tiếp (Single Video hoặc Playlist)
-      const ytdlp = spawn('yt-dlp', ['-j', '--flat-playlist', query]);
+      const args = [
+        '-j', 
+        '--flat-playlist', 
+        ...BYPASS_BOT_ARGS, 
+        query
+      ];
+
+      const ytdlp = spawn('yt-dlp', args);
       let stdoutData = '';
 
       ytdlp.stdout.on('data', (data) => stdoutData += data.toString());
@@ -32,7 +45,6 @@ app.get('/api/parse', async (req, res) => {
         }
 
         const lines = stdoutData.trim().split('\n');
-        // Nếu là Playlist (nhiều dòng JSON)
         if (lines.length > 1) {
           const items = lines.map(line => {
             const item = JSON.parse(line);
@@ -47,7 +59,6 @@ app.get('/api/parse', async (req, res) => {
           });
           return res.json({ type: 'playlist', items });
         } else {
-          // Nếu là 1 Video duy nhất
           const info = JSON.parse(lines[0]);
           return res.json({
             type: 'video',
@@ -63,7 +74,6 @@ app.get('/api/parse', async (req, res) => {
         }
       });
     } else {
-      // Tìm kiếm theo từ khóa
       const page = parseInt(req.query.page) || 1;
       const limit = 12;
       const r = await ytSearch(query);
@@ -87,7 +97,7 @@ app.get('/api/parse', async (req, res) => {
   }
 });
 
-// API Tải MP3/MP4 nâng cấp (Chất lượng, Cắt file, Metadata & Thumbnail)
+// API Tải MP3/MP4
 app.get('/api/download', (req, res) => {
   const { url, format, quality, startTime, endTime } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
@@ -99,20 +109,17 @@ app.get('/api/download', (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="media_${Date.now()}.${ext}"`);
   res.setHeader('Content-Type', contentType);
 
-  const args = [];
+  const args = [...BYPASS_BOT_ARGS];
 
   if (isMp3) {
     args.push('-x', '--audio-format', 'mp3');
-    // Chức năng 1: Chọn chất lượng Audio
     if (quality === '128k') {
       args.push('--audio-quality', '5');
     } else {
-      args.push('--audio-quality', '0'); // ~320kbps
+      args.push('--audio-quality', '0');
     }
-    // Chức năng 6: Tự động gắn Thumbnail & Metadata cho MP3
     args.push('--embed-thumbnail', '--add-metadata');
   } else {
-    // Chức năng 1: Chọn chất lượng Video MP4
     let formatFilter = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best';
     if (quality === '1080p') {
       formatFilter = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best';
@@ -122,7 +129,6 @@ app.get('/api/download', (req, res) => {
     args.push('-f', formatFilter);
   }
 
-  // Chức năng 3: Cắt nhạc/video theo thời gian
   if (startTime || endTime) {
     const start = startTime || '00:00:00';
     const end = endTime || '99:59:59';
@@ -142,5 +148,5 @@ app.get('/api/download', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server đã sẵn sàng tại: http://localhost:${PORT}`);
+  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
 });

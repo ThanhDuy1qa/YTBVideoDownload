@@ -1,5 +1,5 @@
-# Sử dụng môi trường Node.js
-FROM node:18-slim
+# Đổi từ node:18-slim sang node:20-slim
+FROM node:20-slim
 
 # Cài đặt FFmpeg, Python và yt-dlp vào hệ thống cloud
 RUN apt-get update && apt-get install -y \
