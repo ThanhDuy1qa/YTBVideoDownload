@@ -30,7 +30,7 @@ if (fs.existsSync(cookiesPath)) {
 } else {
   console.warn('⚠️ Không tìm thấy file cookies.txt!');
 }
-
+BYPASS_BOT_ARGS.push('--extractor-args', 'youtube:player_client=android,ios');
 // API Phân tích Link hoặc Tìm kiếm từ khóa
 app.get('/api/parse', async (req, res) => {
   const query = req.query.q;
