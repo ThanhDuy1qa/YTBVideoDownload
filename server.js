@@ -44,19 +44,17 @@ app.get('/api/parse', async (req, res) => {
   }
 });
 
-// API Tải MP3/MP4 thông qua Cobalt API v10
+// API Tải MP3/MP4 với cơ chế Fallback qua nhiều Cobalt Instances
 app.get('/api/download', async (req, res) => {
   const { url, format, quality } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
 
   const isMp3 = format === 'mp3';
   
-  // Ánh xạ chất lượng theo chuẩn Cobalt v10
   let videoQuality = '720';
   if (quality === '1080p') videoQuality = '1080';
   if (quality === '480p') videoQuality = '480';
 
-  // Body request chuẩn hóa theo Cobalt API v10
   const payload = {
     url: url,
     downloadMode: isMp3 ? 'audio' : 'auto',
@@ -64,32 +62,50 @@ app.get('/api/download', async (req, res) => {
     videoQuality: videoQuality
   };
 
-  try {
-    console.log(`Đang yêu cầu Cobalt v10 xử lý: ${url} | Chế độ: ${payload.downloadMode}`);
+  // Danh sách các Public Cobalt Instances mở không yêu cầu JWT/API Key
+  const cobaltInstances = [
+    'https://co.wuk.sh',
+    'https://cobalt-api.kwi.ng',
+    'https://cobalt.stream',
+    'https://api.cobalt.tools' // Máy chủ gốc (fallback)
+  ];
 
-    // Endpoint chính của Cobalt API v10
-    const response = await fetch('https://api.cobalt.tools/', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+  let downloadUrl = null;
+  let lastError = null;
 
-    const data = await response.json();
+  for (const instanceUrl of cobaltInstances) {
+    try {
+      console.log(`Đang gửi yêu cầu tới Cobalt Instance: ${instanceUrl}`);
 
-    if (data && data.url) {
-      // Chuyển hướng trực tiếp tới link file do Cobalt trả về (status: tunnel / redirect)
-      return res.redirect(data.url);
-    } else {
-      console.error('Lỗi từ Cobalt API:', data);
-      const errorMsg = data.text || (data.error && data.error.code) || 'Không lấy được link tải.';
-      return res.status(500).send(`Lỗi từ máy chủ tải: ${errorMsg}`);
+      const response = await fetch(`${instanceUrl}/`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (data && data.url) {
+        downloadUrl = data.url;
+        console.log(`=> Thành công lấy link từ: ${instanceUrl}`);
+        break; // Thoát vòng lặp ngay khi lấy được link tải thành công
+      } else {
+        lastError = data.text || (data.error && data.error.code) || 'Lỗi từ instance';
+        console.warn(`Instance ${instanceUrl} thất bại:`, lastError);
+      }
+    } catch (err) {
+      lastError = err.message;
+      console.warn(`Không kết nối được tới instance ${instanceUrl}`);
     }
-  } catch (error) {
-    console.error('Lỗi kết nối Cobalt:', error);
-    return res.status(500).send('Lỗi kết nối tới máy chủ Cobalt.');
+  }
+
+  if (downloadUrl) {
+    return res.redirect(downloadUrl);
+  } else {
+    return res.status(500).send(`Không thể lấy link tải từ các máy chủ Cobalt. Lỗi cuối: ${lastError}`);
   }
 });
 
