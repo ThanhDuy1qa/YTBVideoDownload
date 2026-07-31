@@ -1,8 +1,5 @@
 const express = require('express');
-const ytSearch = require('yt-search');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const ytSearch = require('yt-search'); // Giữ lại yt-search để xử lý tìm kiếm từ khóa
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,76 +12,14 @@ function isYouTubeUrl(url) {
   return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url);
 }
 
-// Cấu hình Client chuẩn cho yt-dlp khi dùng Cookie trên Cloud Server
-const BYPASS_BOT_ARGS = [
-  '--js-runtimes', 'node',
-  '--extractor-args', 'youtube:player_client=tv,mweb,web',
-  '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-];
-
-// Nếu có file cookies.txt -> Thêm tham số --cookies
-const cookiesPath = path.join(__dirname, 'cookies.txt');
-if (fs.existsSync(cookiesPath)) {
-  console.log('🍪 Đã tìm thấy file cookies.txt, áp dụng xác thực YouTube...');
-  BYPASS_BOT_ARGS.push('--cookies', cookiesPath);
-} else {
-  console.warn('⚠️ Không tìm thấy file cookies.txt!');
-}
-BYPASS_BOT_ARGS.push('--extractor-args', 'youtube:player_client=android,ios');
 // API Phân tích Link hoặc Tìm kiếm từ khóa
 app.get('/api/parse', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'Thiếu thông tin tìm kiếm/URL' });
 
   try {
-    if (isYouTubeUrl(query)) {
-      const args = [
-        '-j', 
-        '--flat-playlist', 
-        ...BYPASS_BOT_ARGS, 
-        query
-      ];
-
-      const ytdlp = spawn('yt-dlp', args);
-      let stdoutData = '';
-
-      ytdlp.stdout.on('data', (data) => stdoutData += data.toString());
-      
-      ytdlp.on('close', (code) => {
-        if (code !== 0 || !stdoutData) {
-          return res.status(400).json({ error: 'Không thể phân tích đường dẫn YouTube này.' });
-        }
-
-        const lines = stdoutData.trim().split('\n');
-        if (lines.length > 1) {
-          const items = lines.map(line => {
-            const item = JSON.parse(line);
-            return {
-              id: item.id,
-              url: `https://www.youtube.com/watch?v=${item.id}`,
-              title: item.title,
-              thumbnail: item.thumbnails ? item.thumbnails[0]?.url : `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-              duration: item.duration ? `${Math.floor(item.duration / 60)}:${String(Math.floor(item.duration % 60)).padStart(2, '0')}` : '--:--',
-              author: item.uploader || item.channel || 'YouTube'
-            };
-          });
-          return res.json({ type: 'playlist', items });
-        } else {
-          const info = JSON.parse(lines[0]);
-          return res.json({
-            type: 'video',
-            video: {
-              id: info.id,
-              url: info.webpage_url || `https://www.youtube.com/watch?v=${info.id}`,
-              title: info.title,
-              thumbnail: info.thumbnail || `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg`,
-              duration: info.duration ? `${Math.floor(info.duration / 60)}:${String(Math.floor(info.duration % 60)).padStart(2, '0')}` : '--:--',
-              author: info.uploader || info.channel || 'YouTube'
-            }
-          });
-        }
-      });
-    } else {
+    // Dùng yt-search để xử lý từ khóa tìm kiếm
+    if (!isYouTubeUrl(query)) {
       const page = parseInt(req.query.page) || 1;
       const limit = 12;
       const r = await ytSearch(query);
@@ -100,7 +35,10 @@ app.get('/api/parse', async (req, res) => {
         author: v.author.name
       }));
 
-      res.json({ type: 'search', videos, hasMore: endIndex < r.videos.length });
+      return res.json({ type: 'search', videos, hasMore: endIndex < r.videos.length });
+    } else {
+      // Bỏ qua yt-dlp, Frontend sẽ tự xử lý lấy metadata bằng oEmbed cho link trực tiếp
+      return res.status(400).json({ error: 'Vui lòng dán trực tiếp link vào ô tìm kiếm.' });
     }
   } catch (err) {
     console.error(err);
@@ -108,56 +46,49 @@ app.get('/api/parse', async (req, res) => {
   }
 });
 
-// API Tải MP3/MP4
-app.get('/api/download', (req, res) => {
-  const { url, format, quality, startTime, endTime } = req.query;
+// API Tải MP3/MP4 (Tích hợp Cobalt API)
+app.get('/api/download', async (req, res) => {
+  const { url, format, quality } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
 
   const isMp3 = format === 'mp3';
-  const ext = isMp3 ? 'mp3' : 'mp4';
-  const contentType = isMp3 ? 'audio/mpeg' : 'video/mp4';
+  
+  // Ánh xạ chất lượng video sang chuẩn của Cobalt
+  let vQuality = '720'; 
+  if (quality === '1080p') vQuality = '1080';
+  if (quality === '480p') vQuality = '480';
 
-  res.setHeader('Content-Disposition', `attachment; filename="media_${Date.now()}.${ext}"`);
-  res.setHeader('Content-Type', contentType);
+  try {
+    console.log(`Đang gọi Cobalt API cho: ${url} | Định dạng: ${isMp3 ? 'MP3' : 'MP4'}`);
+    
+    const response = await fetch('https://api.cobalt.tools/api/json', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: url,
+        vQuality: vQuality,
+        isAudioOnly: isMp3
+      })
+    });
 
-  const args = [...BYPASS_BOT_ARGS];
+    const data = await response.json();
 
-  if (isMp3) {
-    args.push('-x', '--audio-format', 'mp3');
-    if (quality === '128k') {
-      args.push('--audio-quality', '5');
+    if (data && data.url) {
+      // Chuyển hướng trình duyệt thẳng tới link tải của Cobalt
+      return res.redirect(data.url);
     } else {
-      args.push('--audio-quality', '0');
+      console.error('Lỗi từ Cobalt:', data);
+      return res.status(500).send('Không thể lấy được link tải lúc này. YouTube có thể đang giới hạn.');
     }
-    args.push('--embed-thumbnail', '--add-metadata');
-  } else {
-    let formatFilter = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best';
-    if (quality === '1080p') {
-      formatFilter = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best';
-    } else if (quality === '480p') {
-      formatFilter = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best';
-    }
-    args.push('-f', formatFilter);
+  } catch (err) {
+    console.error('Lỗi kết nối Cobalt:', err);
+    return res.status(500).send('Đã xảy ra lỗi hệ thống.');
   }
-
-  if (startTime || endTime) {
-    const start = startTime || '00:00:00';
-    const end = endTime || '99:59:59';
-    args.push('--download-sections', `*${start}-${end}`);
-  }
-
-  args.push('-o', '-', url);
-
-  const ytdlp = spawn('yt-dlp', args);
-
-  ytdlp.stdout.pipe(res);
-
-  ytdlp.stderr.on('data', (data) => console.log(`[yt-dlp]: ${data.toString().trim()}`));
-  ytdlp.on('close', (code) => {
-    if (code !== 0) console.error(`Xử lý tải lỗi với mã: ${code}`);
-  });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
+  console.log(`🚀 Server đang chạy trên cổng ${PORT} (Sử dụng Cobalt API)`);
 });
