@@ -72,6 +72,7 @@
                 <option value="128k">128 kbps (Tiết kiệm dung lượng)</option>
               </select>
             </div>
+          </div>
 
           <!-- Download Action -->
           <button onclick="startDirectDownload()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl text-white mt-4 transition shadow-lg">
@@ -109,7 +110,7 @@
             <option value="128k">128 kbps</option>
           </select>
         </div>
-
+      </div>
 
       <button onclick="executeModalDownload()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 font-bold rounded-xl text-white mt-6 transition shadow-lg">
         Tải Xuống
@@ -260,23 +261,9 @@
       }
     }
 
-    function toggleTrimInputs() {
-      const isChecked = document.getElementById('trimToggle').checked;
-      const trimInputs = document.getElementById('trimInputs');
-      if (isChecked) {
-        trimInputs.classList.remove('opacity-50', 'pointer-events-none');
-      } else {
-        trimInputs.classList.add('opacity-50', 'pointer-events-none');
-      }
-    }
-
     function startDirectDownload() {
       const quality = document.getElementById('qualitySelect').value;
-      const isTrim = document.getElementById('trimToggle').checked;
-      const startTime = isTrim ? document.getElementById('trimStart').value.trim() : '';
-      const endTime = isTrim ? document.getElementById('trimEnd').value.trim() : '';
-
-      triggerDownload(activeDirectUrl, activeFormat, quality, startTime, endTime);
+      triggerDownload(activeDirectUrl, activeFormat, quality);
     }
 
     function renderVideoCards(videos) {
@@ -354,20 +341,9 @@
       }
     }
 
-    function toggleModalTrimInputs() {
-      const isChecked = document.getElementById('mTrimToggle').checked;
-      const inputs = document.getElementById('mTrimInputs');
-      if (isChecked) inputs.classList.remove('opacity-50', 'pointer-events-none');
-      else inputs.classList.add('opacity-50', 'pointer-events-none');
-    }
-
     function executeModalDownload() {
       const quality = document.getElementById('mQualitySelect').value;
-      const isTrim = document.getElementById('mTrimToggle').checked;
-      const startTime = isTrim ? document.getElementById('mTrimStart').value.trim() : '';
-      const endTime = isTrim ? document.getElementById('mTrimEnd').value.trim() : '';
-
-      triggerDownload(activeModalUrl, activeModalFormat, quality, startTime, endTime);
+      triggerDownload(activeModalUrl, activeModalFormat, quality);
       closeModal();
     }
 
