@@ -4,24 +4,24 @@ const ytSearch = require('yt-search');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.static('public')); // Thư mục chứa index.html
+app.use(express.static('public'));
 app.use(express.json());
 
-// Helper kiểm tra đường dẫn URL YouTube
-function isYouTubeUrl(url) {
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/i.test(url);
+// Helper bóc tách Video ID từ URL YouTube
+function getYouTubeVideoId(url) {
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
 }
 
-// API Phân tích Link hoặc Tìm kiếm từ khóa
+// ==========================================
+// API Xử lý Tìm kiếm từ khóa (yt-search)
+// ==========================================
 app.get('/api/parse', async (req, res) => {
   const query = req.query.q;
-  if (!query) return res.status(400).json({ error: 'Thiếu thông tin tìm kiếm/URL' });
+  if (!query) return res.status(400).json({ error: 'Thiếu thông tin tìm kiếm' });
 
   try {
-    if (isYouTubeUrl(query)) {
-      return res.status(400).json({ error: 'Hãy dán link trực tiếp vào khung tải xuống, không cần tìm kiếm.' });
-    }
-
     const page = parseInt(req.query.page) || 1;
     const limit = 12;
     const r = await ytSearch(query);
@@ -39,76 +39,59 @@ app.get('/api/parse', async (req, res) => {
 
     res.json({ type: 'search', videos, hasMore: endIndex < r.videos.length });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Lỗi hệ thống khi xử lý dữ liệu tìm kiếm.' });
+    console.error('Lỗi search:', err);
+    res.status(500).json({ error: 'Lỗi hệ thống khi tìm kiếm dữ liệu.' });
   }
 });
 
-// API Tải MP3/MP4 với cơ chế Fallback qua nhiều Cobalt Instances
+// ==========================================
+// API Tải Xuống (Kết nối RapidAPI)
+// ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format, quality } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
 
-  const isMp3 = format === 'mp3';
+  const videoId = getYouTubeVideoId(url);
+  if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
+
+  const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY; 
+  if (!RAPIDAPI_KEY) return res.status(500).send('Chưa cấu hình RAPIDAPI_KEY trong Environment Variable');
+
+  // Xác định Endpoint theo tài liệu RapidAPI
+  let endpoint = `/get_m4a_download_link/${videoId}`;
   
-  let videoQuality = '720';
-  if (quality === '1080p') videoQuality = '1080';
-  if (quality === '480p') videoQuality = '480';
-
-  const payload = {
-    url: url,
-    downloadMode: isMp3 ? 'audio' : 'auto',
-    audioFormat: isMp3 ? 'mp3' : 'best',
-    videoQuality: videoQuality
-  };
-
-  // Danh sách các Public Cobalt Instances mở không yêu cầu JWT/API Key
-  const cobaltInstances = [
-    'https://co.wuk.sh',
-    'https://cobalt-api.kwi.ng',
-    'https://cobalt.stream',
-    'https://api.cobalt.tools' // Máy chủ gốc (fallback)
-  ];
-
-  let downloadUrl = null;
-  let lastError = null;
-
-  for (const instanceUrl of cobaltInstances) {
-    try {
-      console.log(`Đang gửi yêu cầu tới Cobalt Instance: ${instanceUrl}`);
-
-      const response = await fetch(`${instanceUrl}/`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-
-      if (data && data.url) {
-        downloadUrl = data.url;
-        console.log(`=> Thành công lấy link từ: ${instanceUrl}`);
-        break; // Thoát vòng lặp ngay khi lấy được link tải thành công
-      } else {
-        lastError = data.text || (data.error && data.error.code) || 'Lỗi từ instance';
-        console.warn(`Instance ${instanceUrl} thất bại:`, lastError);
-      }
-    } catch (err) {
-      lastError = err.message;
-      console.warn(`Không kết nối được tới instance ${instanceUrl}`);
-    }
+  if (format === 'mp3') {
+    // Chuyển đổi quality từ frontend ('320k' / '128k') sang chuẩn API ('high' / 'low')
+    const apiQuality = quality === '320k' ? 'high' : 'low';
+    endpoint = `/get_mp3_download_link/${videoId}?quality=${apiQuality}`;
   }
 
-  if (downloadUrl) {
-    return res.redirect(downloadUrl);
-  } else {
-    return res.status(500).send(`Không thể lấy link tải từ các máy chủ Cobalt. Lỗi cuối: ${lastError}`);
+  const targetUrl = `https://youtube-mp3-audio-video-downloader.p.rapidapi.com${endpoint}`;
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-host': 'youtube-mp3-audio-video-downloader.p.rapidapi.com',
+        'x-rapidapi-key': RAPIDAPI_KEY
+      }
+    });
+
+    const data = await response.json();
+
+    if (data && data.file) {
+      // Chuyển hướng người dùng thẳng tới đường dẫn tải file trực tiếp
+      return res.redirect(data.file);
+    } else {
+      console.error('RapidAPI Response:', data);
+      return res.status(500).send('Không tìm thấy file tải xuống. Vui lòng thử lại sau ít phút.');
+    }
+  } catch (err) {
+    console.error('Lỗi khi kết nối RapidAPI:', err);
+    return res.status(500).send(`Lỗi máy chủ: ${err.message}`);
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
+  console.log(`🚀 Server đang chạy tại port ${PORT}`);
 });

@@ -59,8 +59,8 @@
             <div>
               <label class="block text-slate-400 mb-1">Định dạng:</label>
               <div class="grid grid-cols-2 gap-2">
-                <button id="btnFmtMp3" onclick="selectFormat('mp3')" class="py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300">MP3 (Audio)</button>
-                <button id="btnFmtMp4" onclick="selectFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">MP4 (Video)</button>
+                <button id="btnFmtMp3" onclick="selectFormat('mp3')" class="py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300">Audio (MP3/M4A)</button>
+                <button id="btnFmtMp4" onclick="selectFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">Video (M4A Fast)</button>
               </div>
             </div>
 
@@ -68,8 +68,8 @@
             <div>
               <label class="block text-slate-400 mb-1">Chất lượng:</label>
               <select id="qualitySelect" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
-                <option value="320k">320 kbps (Cao nhất)</option>
-                <option value="128k">128 kbps (Tiết kiệm dung lượng)</option>
+                <option value="320k">Chất lượng cao (High)</option>
+                <option value="128k">Tốc độ nhanh (Low)</option>
               </select>
             </div>
           </div>
@@ -99,15 +99,15 @@
           <label class="block text-slate-400 mb-1">Định dạng:</label>
           <div class="grid grid-cols-2 gap-2">
             <button id="mBtnFmtMp3" onclick="selectModalFormat('mp3')" class="py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300">MP3</button>
-            <button id="mBtnFmtMp4" onclick="selectModalFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">MP4</button>
+            <button id="mBtnFmtMp4" onclick="selectModalFormat('mp4')" class="py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400">M4A Fast</button>
           </div>
         </div>
 
         <div>
           <label class="block text-slate-400 mb-1">Chất lượng:</label>
           <select id="mQualitySelect" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
-            <option value="320k">320 kbps (Cao nhất)</option>
-            <option value="128k">128 kbps</option>
+            <option value="320k">Chất lượng cao</option>
+            <option value="128k">Tốc độ nhanh</option>
           </select>
         </div>
       </div>
@@ -124,15 +124,12 @@
     let isLoading = false;
     let hasMore = true;
     
-    // State dữ liệu link trực tiếp
     let activeDirectUrl = '';
     let activeFormat = 'mp3';
     
-    // State dữ liệu modal
     let activeModalUrl = '';
     let activeModalFormat = 'mp3';
 
-    // Bóc tách Video ID tức thì
     function getYouTubeVideoId(url) {
       const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
       const match = url.match(regExp);
@@ -147,7 +144,6 @@
       const directContainer = document.getElementById('directVideoContainer');
       const resultsEl = document.getElementById('results');
 
-      // Tối ưu load tức thì khi dán link Video đơn
       if (query.startsWith('http://') || query.startsWith('https://')) {
         if (!query.includes('list=')) {
           const videoId = getYouTubeVideoId(query);
@@ -177,7 +173,6 @@
         }
       }
 
-      // Xử lý Từ khóa tìm kiếm hoặc Playlist
       if (isNewSearch) {
         currentQuery = query;
         currentPage = 1;
@@ -205,13 +200,8 @@
           return;
         }
 
-        if (data.type === 'video') {
-          setupDirectView(data.video);
-          return;
-        }
-
-        const videos = data.type === 'playlist' ? data.items : data.videos;
-        hasMore = data.type === 'search' ? data.hasMore : false;
+        const videos = data.videos;
+        hasMore = data.hasMore;
 
         if (!videos || videos.length === 0) {
           statusEl.innerText = 'Không tìm thấy kết quả!';
@@ -220,7 +210,7 @@
         }
 
         renderVideoCards(videos);
-        if (data.type === 'search') currentPage++;
+        currentPage++;
 
       } catch (err) {
         statusEl.innerText = 'Lỗi kết nối máy chủ!';
@@ -228,36 +218,17 @@
       }
     }
 
-    function setupDirectView(video) {
-      activeDirectUrl = video.url;
-      document.getElementById('directIframe').src = `https://www.youtube.com/embed/${video.id}`;
-      document.getElementById('directTitle').innerText = video.title;
-      document.getElementById('directAuthor').innerText = video.author;
-      document.getElementById('directVideoContainer').classList.remove('hidden');
-      window.scrollTo({ top: 100, behavior: 'smooth' });
-    }
-
     function selectFormat(fmt) {
       activeFormat = fmt;
       const btnMp3 = document.getElementById('btnFmtMp3');
       const btnMp4 = document.getElementById('btnFmtMp4');
-      const qualitySelect = document.getElementById('qualitySelect');
 
       if (fmt === 'mp3') {
         btnMp3.className = 'py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300';
         btnMp4.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
-        qualitySelect.innerHTML = `
-          <option value="320k">320 kbps (Cao nhất)</option>
-          <option value="128k">128 kbps (Tiết kiệm)</option>
-        `;
       } else {
         btnMp4.className = 'py-2 rounded-lg font-bold border border-blue-500/50 bg-blue-500/20 text-blue-300';
         btnMp3.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
-        qualitySelect.innerHTML = `
-          <option value="1080p">1080p (Full HD)</option>
-          <option value="720p">720p (HD)</option>
-          <option value="480p">480p</option>
-        `;
       }
     }
 
@@ -321,23 +292,13 @@
       activeModalFormat = fmt;
       const mBtnMp3 = document.getElementById('mBtnFmtMp3');
       const mBtnMp4 = document.getElementById('mBtnFmtMp4');
-      const mQualitySelect = document.getElementById('mQualitySelect');
 
       if (fmt === 'mp3') {
         mBtnMp3.className = 'py-2 rounded-lg font-bold border border-emerald-500/50 bg-emerald-500/20 text-emerald-300';
         mBtnMp4.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
-        mQualitySelect.innerHTML = `
-          <option value="320k">320 kbps (Cao nhất)</option>
-          <option value="128k">128 kbps</option>
-        `;
       } else {
         mBtnMp4.className = 'py-2 rounded-lg font-bold border border-blue-500/50 bg-blue-500/20 text-blue-300';
         mBtnMp3.className = 'py-2 rounded-lg font-bold border border-slate-700 bg-slate-800 text-slate-400';
-        mQualitySelect.innerHTML = `
-          <option value="1080p">1080p (Full HD)</option>
-          <option value="720p">720p (HD)</option>
-          <option value="480p">480p</option>
-        `;
       }
     }
 
