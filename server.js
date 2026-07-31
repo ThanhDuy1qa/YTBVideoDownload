@@ -1,6 +1,6 @@
 const express = require('express');
 const ytSearch = require('yt-search');
-
+const { Readable } = require('stream');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -48,22 +48,23 @@ app.get('/api/parse', async (req, res) => {
 // API Tải Xuống (Kết nối RapidAPI)
 // ==========================================
 app.get('/api/download', async (req, res) => {
-  const { url, format, quality } = req.query;
+  const { url, format, quality, title } = req.query; // Nhận thêm tham số 'title'
   if (!url) return res.status(400).send('Thiếu URL video');
 
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
   const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY; 
-  if (!RAPIDAPI_KEY) return res.status(500).send('Chưa cấu hình RAPIDAPI_KEY trong Environment Variable');
+  if (!RAPIDAPI_KEY) return res.status(500).send('Chưa cấu hình RAPIDAPI_KEY');
 
-  // Xác định Endpoint theo tài liệu RapidAPI
+  // Xác định Endpoint
   let endpoint = `/get_m4a_download_link/${videoId}`;
-  
+  let ext = 'm4a';
+
   if (format === 'mp3') {
-    // Chuyển đổi quality từ frontend ('320k' / '128k') sang chuẩn API ('high' / 'low')
     const apiQuality = quality === '320k' ? 'high' : 'low';
     endpoint = `/get_mp3_download_link/${videoId}?quality=${apiQuality}`;
+    ext = 'mp3';
   }
 
   const targetUrl = `https://youtube-mp3-audio-video-downloader.p.rapidapi.com${endpoint}`;
@@ -80,14 +81,28 @@ app.get('/api/download', async (req, res) => {
     const data = await response.json();
 
     if (data && data.file) {
-      // Chuyển hướng người dùng thẳng tới đường dẫn tải file trực tiếp
-      return res.redirect(data.file);
+      // 1. Tạo tên file an toàn (xóa ký tự đặc biệt cấm đặt tên file trên Windows/Mac)
+      const rawTitle = title || 'youtube_audio';
+      const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '').trim() || 'audio';
+      const fileName = `${safeTitle}.${ext}`;
+
+      // 2. Tải luồng dữ liệu file từ RapidAPI về Server
+      const fileStreamResponse = await fetch(data.file);
+      if (!fileStreamResponse.ok) throw new Error('Không thể tải luồng file từ máy chủ lưu trữ');
+
+      // 3. Thiết lập Header ép trình duyệt tải xuống với đúng TÊN VIDEO
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      res.setHeader('Content-Type', fileStreamResponse.headers.get('content-type') || 'application/octet-stream');
+
+      // 4. Pipe luồng dữ liệu về máy người dùng
+      Readable.fromWeb(fileStreamResponse.body).pipe(res);
+
     } else {
       console.error('RapidAPI Response:', data);
-      return res.status(500).send('Không tìm thấy file tải xuống. Vui lòng thử lại sau ít phút.');
+      return res.status(500).send('Không tìm thấy file tải xuống. Vui lòng thử lại.');
     }
   } catch (err) {
-    console.error('Lỗi khi kết nối RapidAPI:', err);
+    console.error('Lỗi khi tải file:', err);
     return res.status(500).send(`Lỗi máy chủ: ${err.message}`);
   }
 });
