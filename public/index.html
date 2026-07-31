@@ -234,8 +234,7 @@
 
     function startDirectDownload() {
       const quality = document.getElementById('qualitySelect').value;
-      const title = document.getElementById('directTitle').innerText; // Lấy tên video trực tiếp
-      triggerDownload(activeDirectUrl, activeFormat, quality, title);
+      triggerDownload(activeDirectUrl, activeFormat, quality);
     }
 
     function renderVideoCards(videos) {
@@ -305,13 +304,12 @@
 
     function executeModalDownload() {
       const quality = document.getElementById('mQualitySelect').value;
-      const title = document.getElementById('modalTitle').innerText; // Lấy tên video trong Modal
-      triggerDownload(activeModalUrl, activeModalFormat, quality, title);
+      triggerDownload(activeModalUrl, activeModalFormat, quality);
       closeModal();
     }
 
-    function triggerDownload(url, format, quality, title = '') {
-      const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}&title=${encodeURIComponent(title)}`;
+    function triggerDownload(url, format, quality) {
+      const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
       window.location.href = downloadUrl;
     }
 
