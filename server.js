@@ -7,6 +7,9 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static('public'));
 app.use(express.json());
 
+// Hàm bổ sung: Tạm dừng server trong x miligiây để chờ file xử lý
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Helper bóc tách Video ID từ URL YouTube
 function getYouTubeVideoId(url) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -45,7 +48,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// API Tải Xuống (Kết nối RapidAPI)
+// API Tải Xuống (Kết nối RapidAPI có cơ chế Chờ)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format, quality } = req.query;
@@ -61,7 +64,6 @@ app.get('/api/download', async (req, res) => {
   let endpoint = `/get_m4a_download_link/${videoId}`;
   
   if (format === 'mp3') {
-    // Chuyển đổi quality từ frontend ('320k' / '128k') sang chuẩn API ('high' / 'low')
     const apiQuality = quality === '320k' ? 'high' : 'low';
     endpoint = `/get_mp3_download_link/${videoId}?quality=${apiQuality}`;
   }
@@ -80,8 +82,34 @@ app.get('/api/download', async (req, res) => {
     const data = await response.json();
 
     if (data && data.file) {
-      // Chuyển hướng người dùng thẳng tới đường dẫn tải file trực tiếp
-      return res.redirect(data.file);
+      console.log(`Đã lấy link từ RapidAPI. Đang chờ máy chủ của họ chuẩn bị file...`);
+
+      // Vòng lặp kiểm tra ngầm (Polling) tránh lỗi 404
+      let isReady = false;
+      const maxRetries = 20; // Thử tối đa 20 lần (~1 phút)
+
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          const checkRes = await fetch(data.file, { method: 'HEAD' });
+          if (checkRes.status === 200) {
+            isReady = true;
+            break; // File đã sẵn sàng, thoát vòng lặp
+          }
+        } catch (e) {
+          // Bỏ qua lỗi kết nối mạng chập chờn trong lúc chờ
+        }
+
+        // Chờ 3 giây rồi kiểm tra lại
+        await sleep(3000);
+      }
+
+      if (isReady) {
+        console.log('✅ File đã sẵn sàng, tiến hành chuyển hướng tải xuống.');
+        return res.redirect(data.file);
+      } else {
+        return res.status(500).send('Video quá dài đang được xử lý. Vui lòng bấm tải lại sau ít phút.');
+      }
+
     } else {
       console.error('RapidAPI Response:', data);
       return res.status(500).send('Không tìm thấy file tải xuống. Vui lòng thử lại sau ít phút.');

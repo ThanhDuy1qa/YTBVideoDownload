@@ -309,8 +309,28 @@
     }
 
     function triggerDownload(url, format, quality) {
+      // 1. Lấy thẻ thông báo có sẵn trên giao diện
+      const statusEl = document.getElementById('status');
+      
+      // 2. Hiển thị thông báo chờ và đổi màu chữ cho nổi bật
+      statusEl.innerText = '⏳ Hệ thống đang xử lý file. Vui lòng giữ nguyên trang và chờ khoảng 10-30 giây...';
+      statusEl.classList.remove('hidden', 'text-slate-400');
+      statusEl.classList.add('text-emerald-400', 'font-bold'); 
+      
+      // Đóng Modal (nếu đang mở) và cuộn màn hình lên chỗ thông báo
+      closeModal();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // 3. Kích hoạt URL tải file (Lúc này Backend của bạn sẽ âm thầm chờ RapidAPI xử lý)
       const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`;
       window.location.href = downloadUrl;
+
+      // 4. Tự động tắt thông báo sau 15 giây (do trình duyệt tải file ngầm không làm mới trang)
+      setTimeout(() => {
+        statusEl.innerText = 'Đang phân tích dữ liệu...'; // Trả lại chữ gốc
+        statusEl.classList.add('hidden', 'text-slate-400');
+        statusEl.classList.remove('text-emerald-400', 'font-bold');
+      }, 15000);
     }
 
     window.addEventListener('scroll', () => {
