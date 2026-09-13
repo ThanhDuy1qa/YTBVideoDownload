@@ -2,7 +2,7 @@ const express = require('express');
 const ytSearch = require('yt-search');
 const dns = require('dns');
 
-// Ép Node.js ưu tiên IPv4 để khắc phục triệt để lỗi ENOTFOUND trên Render/Docker
+// Ép Node.js ưu tiên IPv4 để không dính lỗi ENOTFOUND DNS trên Render
 dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
@@ -16,6 +16,19 @@ function getYouTubeVideoId(url) {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
   const match = url.match(regExp);
   return (match && match[2].length === 11) ? match[2] : null;
+}
+
+// Helper đọc JSON an toàn, chống crash khi API trả về trang HTML/Cloudflare
+async function safeFetchJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  
+  // Kiểm tra nếu phản hồi là HTML thay vì JSON
+  if (text.trim().startsWith('<')) {
+    throw new Error('Máy chủ dịch vụ bị Cloudflare chặn (trả về HTML)');
+  }
+  
+  return JSON.parse(text);
 }
 
 // ==========================================
@@ -49,7 +62,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp (Dùng YT1S Engine Bypass Cloud IP Ban)
+// 2. API Tải Xuống Trực Tiếp (An toàn, chống crash HTML)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
@@ -61,63 +74,66 @@ app.get('/api/download', async (req, res) => {
   const isMp3 = format === 'mp3';
   const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
+  // Kênh 1: Phân tích qua Loader Engine Direct
   try {
-    // Bước 1: Gửi request phân tích video tới YT1S
-    const searchRes = await fetch('https://yt1s.com/api/ajaxSearch/index', {
+    const apiUrl = `https://api.vevioz.com/api/button/${isMp3 ? 'mp3' : 'videos'}/${videoId}`;
+    const loaderRes = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+
+    if (loaderRes.ok) {
+      const html = await loaderRes.text();
+      const downloadLinkMatch = html.match(/href="(https:\/\/[^"]+)"/);
+      if (downloadLinkMatch && downloadLinkMatch[1]) {
+        return res.redirect(downloadLinkMatch[1]);
+      }
+    }
+  } catch (e) {
+    console.log('Kênh 1 bận, thử chuyển kênh 2...');
+  }
+
+  // Kênh 2: Phân tích qua Chuyển đổi API với Bọc kiểm tra JSON
+  try {
+    const searchData = await safeFetchJson('https://yt1s.com/api/ajaxSearch/index', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'X-Requested-With': 'XMLHttpRequest'
       },
       body: new URLSearchParams({ q: targetUrl, vt: 'home' })
     });
 
-    const searchData = await searchRes.json();
-
-    if (!searchData || searchData.status !== 'ok' || !searchData.links) {
-      return res.status(500).send('Máy chủ phân tích bận. Vui lòng bấm thử lại sau 3 giây!');
-    }
-
-    let key = '';
-    if (isMp3) {
-      // Ưu tiên lấy định dạng MP3
+    if (searchData && searchData.status === 'ok' && searchData.links) {
       const mp3Links = searchData.links.mp3;
-      key = mp3Links?.mp3128?.k || mp3Links?.mp3320?.k || Object.values(mp3Links || {})[0]?.k;
-    } else {
-      // Ưu tiên lấy định dạng MP4 (360p / 720p có sẵn âm thanh)
       const mp4Links = searchData.links.mp4;
-      key = mp4Links?.['18']?.k || mp4Links?.['22']?.k || Object.values(mp4Links || {})[0]?.k;
+      const key = isMp3 
+        ? (mp3Links?.mp3128?.k || Object.values(mp3Links || {})[0]?.k)
+        : (mp4Links?.['18']?.k || mp4Links?.['22']?.k || Object.values(mp4Links || {})[0]?.k);
+
+      if (key) {
+        const convertData = await safeFetchJson('https://yt1s.com/api/ajaxConvert/convert', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: new URLSearchParams({ vid: videoId, k: key })
+        });
+
+        if (convertData && convertData.status === 'ok' && convertData.dlink) {
+          return res.redirect(convertData.dlink);
+        }
+      }
     }
-
-    if (!key) {
-      return res.status(500).send('Không tìm thấy định dạng tải xuống phù hợp.');
-    }
-
-    // Bước 2: Tạo đường dẫn tải file trực tiếp (Direct Download CDN)
-    const convertRes = await fetch('https://yt1s.com/api/ajaxConvert/convert', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: new URLSearchParams({ vid: videoId, k: key })
-    });
-
-    const convertData = await convertRes.json();
-
-    if (convertData && convertData.status === 'ok' && convertData.dlink) {
-      // Chuyển hướng trực tiếp thiết bị điện thoại / máy tính đến link tải file
-      return res.redirect(convertData.dlink);
-    } else {
-      return res.status(500).send('Không thể khởi tạo đường dẫn file. Vui lòng thử lại!');
-    }
-
-  } catch (err) {
-    console.error('Lỗi xử lý API:', err);
-    return res.status(500).send('Lỗi kết nối máy chủ xử lý.');
+  } catch (e) {
+    console.log('Kênh 2 báo lỗi:', e.message);
   }
+
+  return res.status(500).send('Hệ thống đang nghẽn do lượt tải cao trên Server Cloud. Vui lòng bấm thử lại sau 5 giây!');
 });
 
 app.listen(PORT, () => {
