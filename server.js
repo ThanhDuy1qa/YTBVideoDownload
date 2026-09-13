@@ -48,6 +48,9 @@ app.get('/api/parse', async (req, res) => {
 // ==========================================
 // 2. API Tải Xuống Trực Tiếp (Dùng Cobalt API)
 // ==========================================
+// ==========================================
+// 2. API Tải Xuống Trực Tiếp (Dùng Piped API)
+// ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
@@ -55,41 +58,39 @@ app.get('/api/download', async (req, res) => {
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
   try {
-    // Gửi request tới Cobalt API
-    const response = await fetch('https://api.cobalt.tools/', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        url: targetUrl,
-        downloadMode: format === 'mp3' ? 'audio' : 'auto',
-        audioFormat: 'mp3',
-        youtubeVideoCodec: 'h264'
-      })
-    });
+    // Gọi API của Piped để lấy danh sách stream
+    const response = await fetch(`https://api.piped.video/streams/${videoId}`);
+    
+    if (!response.ok) {
+      return res.status(500).send('Máy chủ Piped không thể phân tích video này.');
+    }
 
     const data = await response.json();
+    const isMp3 = format === 'mp3';
 
-    // Nếu lấy thành công link tải, chuyển hướng thiết bị của người dùng đến file
-    if (data && data.url) {
-      return res.redirect(data.url);
-    } else if (data && data.picker) {
-      // Trường hợp trả về danh sách link stream
-      return res.redirect(data.picker[0].url);
+    let targetStream;
+    if (isMp3) {
+      // Tìm luồng âm thanh (audio stream) có bitrate cao nhất
+      targetStream = data.audioStreams?.sort((a, b) => b.bitrate - a.bitrate)[0];
     } else {
-      console.error('Lỗi Cobalt Response:', data);
-      return res.status(500).send('Cobalt không thể lấy link tải video này.');
+      // Tìm luồng video có kèm cả tiếng
+      targetStream = data.videoStreams?.find(v => v.videoOnly === false) || data.videoStreams?.[0];
+    }
+
+    if (targetStream && targetStream.url) {
+      // Chuyển hướng trực tiếp thiết bị của người dùng tới file stream
+      return res.redirect(targetStream.url);
+    } else {
+      return res.status(500).send('Không tìm thấy link tải tương thích.');
     }
   } catch (err) {
-    console.error('Lỗi kết nối Cobalt API:', err);
-    return res.status(500).send('Lỗi kết nối máy chủ xử lý video.');
+    console.error('Lỗi Piped API:', err);
+    return res.status(500).send('Lỗi máy chủ khi xử lý video.');
   }
 });
+
+// ==========================================
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại port ${PORT}`);
 });
