@@ -1,14 +1,11 @@
 const express = require('express');
 const ytSearch = require('yt-search');
-const { Readable } = require('stream');
+const { spawn } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 app.use(express.json());
-
-// Hàm bổ sung: Tạm dừng server trong x miligiây để chờ file xử lý
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper bóc tách Video ID từ URL YouTube
 function getYouTubeVideoId(url) {
@@ -18,7 +15,7 @@ function getYouTubeVideoId(url) {
 }
 
 // ==========================================
-// API Xử lý Tìm kiếm từ khóa (yt-search)
+// 1. API Tìm kiếm từ khóa (yt-search)
 // ==========================================
 app.get('/api/parse', async (req, res) => {
   const query = req.query.q;
@@ -48,90 +45,71 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// API Tải Xuống (Kết nối RapidAPI có cơ chế Chờ)
+// 2. API Tải Xuống Trực Tiếp Bằng yt-dlp
 // ==========================================
-app.get('/api/download', async (req, res) => {
+app.get('/api/download', (req, res) => {
   const { url, format, quality } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
 
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY; 
-  if (!RAPIDAPI_KEY) return res.status(500).send('Chưa cấu hình RAPIDAPI_KEY trong Environment Variable');
+  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const isMp3 = format === 'mp3';
 
-  // Xác định Endpoint theo tài liệu RapidAPI
-  let endpoint = `/get_m4a_download_link/${videoId}`;
-  
-  if (format === 'mp3') {
-    const apiQuality = quality === '320k' ? 'high' : 'low';
-    endpoint = `/get_mp3_download_link/${videoId}?quality=${apiQuality}`;
+  // Đặt header hỗ trợ tải file trực tiếp trên Điện thoại & Máy tính
+  const ext = isMp3 ? 'mp3' : 'mp4';
+  const filename = `youtube_${videoId}.${ext}`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'video/mp4');
+
+  // Chuẩn bị tham số cho yt-dlp
+  let args = [];
+  if (isMp3) {
+    const audioQuality = quality === '320k' ? '0' : '5'; // 0: VBR cao nhất (~320k), 5: trung bình (~128k)
+    args = [
+      '-f', 'bestaudio/best',
+      '--extract-audio',
+      '--audio-format', 'mp3',
+      '--audio-quality', audioQuality,
+      '-o', '-', // Đưa dữ liệu ra stdout để stream
+      targetUrl
+    ];
+  } else {
+    args = [
+      '-f', 'best[ext=mp4]/best',
+      '-o', '-', // Đưa dữ liệu ra stdout để stream
+      targetUrl
+    ];
   }
 
-  const targetUrl = `https://youtube-mp3-audio-video-downloader.p.rapidapi.com${endpoint}`;
+  // Khởi chạy tiến trình yt-dlp (dùng spawn an toàn)
+  const ytdlp = spawn('yt-dlp', args);
 
-  try {
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      headers: {
-        'x-rapidapi-host': 'youtube-mp3-audio-video-downloader.p.rapidapi.com',
-        'x-rapidapi-key': RAPIDAPI_KEY
-      }
-    });
+  // Stream trực tiếp về thiết bị người dùng
+  ytdlp.stdout.pipe(res);
 
-    // Đọc dữ liệu dưới dạng text trước để tránh lỗi crash khi parse JSON
-    const responseText = await response.text();
+  ytdlp.stderr.on('data', (data) => {
+    console.error(`yt-dlp log: ${data}`);
+  });
 
-    if (!response.ok) {
-      console.error(`Lỗi RapidAPI (HTTP ${response.status}):`, responseText);
-      return res.status(500).send(`Máy chủ RapidAPI trả về lỗi HTTP ${response.status}`);
+  ytdlp.on('error', (err) => {
+    console.error('Lỗi khởi chạy yt-dlp:', err);
+    if (!res.headersSent) {
+      res.status(500).send('Lỗi máy chủ khi xử lý video.');
     }
+  });
 
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (e) {
-      console.error('Phản hồi không phải JSON:', responseText);
-      return res.status(500).send('Dữ liệu từ RapidAPI không đúng định dạng JSON.');
-    };
-
-    if (data && data.file) {
-      console.log(`Đã lấy link từ RapidAPI. Đang chờ máy chủ của họ chuẩn bị file...`);
-
-      // Vòng lặp kiểm tra ngầm (Polling) tránh lỗi 404
-      let isReady = false;
-      const maxRetries = 20; // Thử tối đa 20 lần (~1 phút)
-
-      for (let i = 0; i < maxRetries; i++) {
-        try {
-          const checkRes = await fetch(data.file, { method: 'HEAD' });
-          if (checkRes.status === 200) {
-            isReady = true;
-            break; // File đã sẵn sàng, thoát vòng lặp
-          }
-        } catch (e) {
-          // Bỏ qua lỗi kết nối mạng chập chờn trong lúc chờ
-        }
-
-        // Chờ 3 giây rồi kiểm tra lại
-        await sleep(3000);
-      }
-
-      if (isReady) {
-        console.log('✅ File đã sẵn sàng, tiến hành chuyển hướng tải xuống.');
-        return res.redirect(data.file);
-      } else {
-        return res.status(500).send('Video quá dài đang được xử lý. Vui lòng bấm tải lại sau ít phút.');
-      }
-
-    } else {
-      console.error('RapidAPI Response:', data);
-      return res.status(500).send('Không tìm thấy file tải xuống. Vui lòng thử lại sau ít phút.');
+  ytdlp.on('close', (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp kết thúc với mã lỗi: ${code}`);
     }
-  } catch (err) {
-    console.error('Lỗi khi kết nối RapidAPI:', err);
-    return res.status(500).send(`Lỗi máy chủ: ${err.message}`);
-  }
+  });
+
+  // Hủy tiến trình yt-dlp nếu người dùng ngắt kết nối giữa chừng (đóng web/hủy tải)
+  req.on('close', () => {
+    ytdlp.kill();
+  });
 });
 
 app.listen(PORT, () => {
