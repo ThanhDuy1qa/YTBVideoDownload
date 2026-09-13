@@ -66,8 +66,8 @@ app.get('/api/download', (req, res) => {
 
   // Cấu hình các tham số vượt rào chống Bot của YouTube & Khắc phục lỗi JS Runtime
   const baseArgs = [
-    '--js-runtimes', 'node', // Sử dụng Node.js trong container làm JS engine
-    '--extractor-args', 'youtube:player_client=android,web', // Giả lập client Android/Web vượt lỗi 403
+    '--js-runtimes', 'node',
+    '--extractor-args', 'youtube:player_client=ios,mweb',
     '--no-playlist'
   ];
 
