@@ -46,86 +46,50 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp Bằng yt-dlp
+// 2. API Tải Xuống Trực Tiếp (Dùng Cobalt API)
 // ==========================================
-app.get('/api/download', (req, res) => {
-  const { url, format, quality } = req.query;
+app.get('/api/download', async (req, res) => {
+  const { url, format } = req.query;
   if (!url) return res.status(400).send('Thiếu URL video');
 
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
   const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  const isMp3 = format === 'mp3';
 
-  // Đặt header hỗ trợ tải file trực tiếp trên Điện thoại & Máy tính
-  const ext = isMp3 ? 'mp3' : 'mp4';
-  const filename = `youtube_${videoId}.${ext}`;
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'video/mp4');
+  try {
+    // Gửi request tới Cobalt API
+    const response = await fetch('https://api.cobalt.tools/', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: targetUrl,
+        downloadMode: format === 'mp3' ? 'audio' : 'auto',
+        audioFormat: 'mp3',
+        youtubeVideoCodec: 'h264'
+      })
+    });
 
-  // Cấu hình các tham số vượt rào chống Bot của YouTube & Khắc phục lỗi JS Runtime
-  const baseArgs = [
-    '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=ios,mweb',
-    '--no-playlist'
-  ];
+    const data = await response.json();
 
-  // Nếu có file cookies.txt trong thư mục gốc, tự động áp dụng
-  if (fs.existsSync('./cookies.txt')) {
-    baseArgs.push('--cookies', './cookies.txt');
-  }
-
-  let args = [];
-  if (isMp3) {
-    const audioQuality = quality === '320k' ? '0' : '5'; // 0: VBR cao nhất (~320k), 5: trung bình (~128k)
-    args = [
-      ...baseArgs,
-      '-f', 'bestaudio/best',
-      '--extract-audio',
-      '--audio-format', 'mp3',
-      '--audio-quality', audioQuality,
-      '-o', '-', // Đưa dữ liệu ra stdout để stream
-      targetUrl
-    ];
-  } else {
-    args = [
-      ...baseArgs,
-      '-f', 'best[ext=mp4]/best',
-      '-o', '-', // Đưa dữ liệu ra stdout để stream
-      targetUrl
-    ];
-  }
-
-  // Khởi chạy tiến trình yt-dlp
-  const ytdlp = spawn('yt-dlp', args);
-
-  // Stream trực tiếp về thiết bị người dùng
-  ytdlp.stdout.pipe(res);
-
-  ytdlp.stderr.on('data', (data) => {
-    console.error(`yt-dlp log: ${data}`);
-  });
-
-  ytdlp.on('error', (err) => {
-    console.error('Lỗi khởi chạy yt-dlp:', err);
-    if (!res.headersSent) {
-      res.status(500).send('Lỗi máy chủ khi xử lý video.');
+    // Nếu lấy thành công link tải, chuyển hướng thiết bị của người dùng đến file
+    if (data && data.url) {
+      return res.redirect(data.url);
+    } else if (data && data.picker) {
+      // Trường hợp trả về danh sách link stream
+      return res.redirect(data.picker[0].url);
+    } else {
+      console.error('Lỗi Cobalt Response:', data);
+      return res.status(500).send('Cobalt không thể lấy link tải video này.');
     }
-  });
-
-  ytdlp.on('close', (code) => {
-    if (code !== 0) {
-      console.error(`yt-dlp kết thúc với mã lỗi: ${code}`);
-    }
-  });
-
-  // Hủy tiến trình yt-dlp nếu người dùng ngắt kết nối giữa chừng (đóng web/hủy tải)
-  req.on('close', () => {
-    ytdlp.kill();
-  });
+  } catch (err) {
+    console.error('Lỗi kết nối Cobalt API:', err);
+    return res.status(500).send('Lỗi kết nối máy chủ xử lý video.');
+  }
 });
-
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại port ${PORT}`);
 });
