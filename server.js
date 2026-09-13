@@ -1,7 +1,5 @@
 const express = require('express');
 const ytSearch = require('yt-search');
-const { spawn } = require('child_process');
-const fs = require('fs'); // Thêm thư viện fs để kiểm tra file cookies nếu có
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -46,7 +44,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp (Piped API + Fallback Auto)
+// 2. API Tải Xuống Trực Tiếp (Dùng Invidious API + Auto Fallback)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
@@ -55,60 +53,68 @@ app.get('/api/download', async (req, res) => {
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  // Danh sách các máy chủ Piped API hoạt động ổn định nhất
-  const PIPED_INSTANCES = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.adminforge.de',
-    'https://piped-api.garudalinux.org',
-    'https://api.piped.projectsegfau.lt'
+  // Danh sách các máy chủ Invidious API chạy ổn định nhất
+  const INVIDIOUS_INSTANCES = [
+    'https://invidious.nerdvpn.de',
+    'https://invidious.drgns.space',
+    'https://inv.us.projectsegfau.lt',
+    'https://invidious.privacyredirect.com',
+    'https://invidious.io.lol'
   ];
 
-  let data = null;
+  let videoData = null;
 
-  // Vòng lặp thử từng máy chủ, nếu server lỗi sẽ tự động chuyển sang server tiếp theo
-  for (const instance of PIPED_INSTANCES) {
+  // Tự động xoay vòng máy chủ nếu có server bị nghẽn
+  for (const instance of INVIDIOUS_INSTANCES) {
     try {
-      const response = await fetch(`${instance}/streams/${videoId}`, {
-        signal: AbortSignal.timeout(4000) // Giới hạn chờ 4s cho mỗi server
+      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        signal: AbortSignal.timeout(5000) // Giới hạn chờ 5 giây cho mỗi server
       });
 
       if (response.ok) {
-        data = await response.json();
+        videoData = await response.json();
         break; // Lấy dữ liệu thành công, thoát vòng lặp
       }
     } catch (e) {
-      console.log(`Server ${instance} gặp lỗi/bận, đang thử server tiếp theo...`);
+      console.log(`Server Invidious (${instance}) bận, đang chuyển server tiếp theo...`);
     }
   }
 
-  if (!data) {
-    return res.status(500).send('Tất cả máy chủ xử lý đều bận. Vui lòng thử lại sau ít phút.');
+  if (!videoData) {
+    return res.status(500).send('Tất cả máy chủ phân tích đều bận. Vui lòng bấm tải lại sau vài giây.');
   }
 
   try {
     const isMp3 = format === 'mp3';
-    let targetStream;
+    let targetUrl = '';
 
     if (isMp3) {
-      // Chọn stream audio chất lượng cao nhất
-      targetStream = data.audioStreams?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      // Lấy stream Audio có chất lượng Bitrate cao nhất từ adaptiveFormats
+      const audioStreams = videoData.adaptiveFormats
+        ?.filter(f => f.type && f.type.startsWith('audio/'))
+        .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
+
+      targetUrl = audioStreams?.[0]?.url;
     } else {
-      // Chọn stream video có sẵn tiếng
-      targetStream = data.videoStreams?.find(v => v.videoOnly === false) || data.videoStreams?.[0];
+      // Lấy stream Video kèm sẵn tiếng từ formatStreams
+      const videoStreams = videoData.formatStreams
+        ?.sort((a, b) => (parseInt(b.height) || 0) - (parseInt(a.height) || 0));
+
+      targetUrl = videoStreams?.[0]?.url;
     }
 
-    if (targetStream && targetStream.url) {
-      return res.redirect(targetStream.url);
+    if (targetUrl) {
+      // Chuyển hướng người dùng trực tiếp tới link tải của Google CDN
+      return res.redirect(targetUrl);
     } else {
-      return res.status(500).send('Không tìm thấy luồng dữ liệu phù hợp.');
+      return res.status(500).send('Không tìm thấy đường dẫn tải xuống phù hợp.');
     }
   } catch (err) {
-    console.error('Lỗi xử lý luồng stream:', err);
-    return res.status(500).send('Lỗi máy chủ khi xử lý file.');
+    console.error('Lỗi xử lý file:', err);
+    return res.status(500).send('Lỗi máy chủ khi tạo đường dẫn tải.');
   }
 });
 
-// ==========================================
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại port ${PORT}`);
 });
