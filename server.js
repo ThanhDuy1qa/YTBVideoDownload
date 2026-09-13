@@ -46,10 +46,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp (Dùng Cobalt API)
-// ==========================================
-// ==========================================
-// 2. API Tải Xuống Trực Tiếp (Dùng Piped API)
+// 2. API Tải Xuống Trực Tiếp (Piped API + Fallback Auto)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
@@ -58,35 +55,56 @@ app.get('/api/download', async (req, res) => {
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  try {
-    // Gọi API của Piped để lấy danh sách stream
-    const response = await fetch(`https://api.piped.video/streams/${videoId}`);
-    
-    if (!response.ok) {
-      return res.status(500).send('Máy chủ Piped không thể phân tích video này.');
+  // Danh sách các máy chủ Piped API hoạt động ổn định nhất
+  const PIPED_INSTANCES = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://piped-api.garudalinux.org',
+    'https://api.piped.projectsegfau.lt'
+  ];
+
+  let data = null;
+
+  // Vòng lặp thử từng máy chủ, nếu server lỗi sẽ tự động chuyển sang server tiếp theo
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const response = await fetch(`${instance}/streams/${videoId}`, {
+        signal: AbortSignal.timeout(4000) // Giới hạn chờ 4s cho mỗi server
+      });
+
+      if (response.ok) {
+        data = await response.json();
+        break; // Lấy dữ liệu thành công, thoát vòng lặp
+      }
+    } catch (e) {
+      console.log(`Server ${instance} gặp lỗi/bận, đang thử server tiếp theo...`);
     }
+  }
 
-    const data = await response.json();
+  if (!data) {
+    return res.status(500).send('Tất cả máy chủ xử lý đều bận. Vui lòng thử lại sau ít phút.');
+  }
+
+  try {
     const isMp3 = format === 'mp3';
-
     let targetStream;
+
     if (isMp3) {
-      // Tìm luồng âm thanh (audio stream) có bitrate cao nhất
-      targetStream = data.audioStreams?.sort((a, b) => b.bitrate - a.bitrate)[0];
+      // Chọn stream audio chất lượng cao nhất
+      targetStream = data.audioStreams?.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
     } else {
-      // Tìm luồng video có kèm cả tiếng
+      // Chọn stream video có sẵn tiếng
       targetStream = data.videoStreams?.find(v => v.videoOnly === false) || data.videoStreams?.[0];
     }
 
     if (targetStream && targetStream.url) {
-      // Chuyển hướng trực tiếp thiết bị của người dùng tới file stream
       return res.redirect(targetStream.url);
     } else {
-      return res.status(500).send('Không tìm thấy link tải tương thích.');
+      return res.status(500).send('Không tìm thấy luồng dữ liệu phù hợp.');
     }
   } catch (err) {
-    console.error('Lỗi Piped API:', err);
-    return res.status(500).send('Lỗi máy chủ khi xử lý video.');
+    console.error('Lỗi xử lý luồng stream:', err);
+    return res.status(500).send('Lỗi máy chủ khi xử lý file.');
   }
 });
 
