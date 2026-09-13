@@ -1,6 +1,7 @@
 const express = require('express');
 const ytSearch = require('yt-search');
 const { spawn } = require('child_process');
+const fs = require('fs'); // Thêm thư viện fs để kiểm tra file cookies nếu có
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -63,11 +64,23 @@ app.get('/api/download', (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Content-Type', isMp3 ? 'audio/mpeg' : 'video/mp4');
 
-  // Chuẩn bị tham số cho yt-dlp
+  // Cấu hình các tham số vượt rào chống Bot của YouTube & Khắc phục lỗi JS Runtime
+  const baseArgs = [
+    '--js-runtimes', 'node', // Sử dụng Node.js trong container làm JS engine
+    '--extractor-args', 'youtube:player_client=android,web', // Giả lập client Android/Web vượt lỗi 403
+    '--no-playlist'
+  ];
+
+  // Nếu có file cookies.txt trong thư mục gốc, tự động áp dụng
+  if (fs.existsSync('./cookies.txt')) {
+    baseArgs.push('--cookies', './cookies.txt');
+  }
+
   let args = [];
   if (isMp3) {
     const audioQuality = quality === '320k' ? '0' : '5'; // 0: VBR cao nhất (~320k), 5: trung bình (~128k)
     args = [
+      ...baseArgs,
       '-f', 'bestaudio/best',
       '--extract-audio',
       '--audio-format', 'mp3',
@@ -77,13 +90,14 @@ app.get('/api/download', (req, res) => {
     ];
   } else {
     args = [
+      ...baseArgs,
       '-f', 'best[ext=mp4]/best',
       '-o', '-', // Đưa dữ liệu ra stdout để stream
       targetUrl
     ];
   }
 
-  // Khởi chạy tiến trình yt-dlp (dùng spawn an toàn)
+  // Khởi chạy tiến trình yt-dlp
   const ytdlp = spawn('yt-dlp', args);
 
   // Stream trực tiếp về thiết bị người dùng
