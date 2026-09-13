@@ -79,7 +79,21 @@ app.get('/api/download', async (req, res) => {
       }
     });
 
-    const data = await response.json();
+    // Đọc dữ liệu dưới dạng text trước để tránh lỗi crash khi parse JSON
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      console.error(`Lỗi RapidAPI (HTTP ${response.status}):`, responseText);
+      return res.status(500).send(`Máy chủ RapidAPI trả về lỗi HTTP ${response.status}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      console.error('Phản hồi không phải JSON:', responseText);
+      return res.status(500).send('Dữ liệu từ RapidAPI không đúng định dạng JSON.');
+    };
 
     if (data && data.file) {
       console.log(`Đã lấy link từ RapidAPI. Đang chờ máy chủ của họ chuẩn bị file...`);
