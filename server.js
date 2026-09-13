@@ -44,7 +44,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp (Dùng Invidious API + Auto Fallback)
+// 2. API Tải Xuống Trực Tiếp (Bypass anti-bot 100% trên Cloud)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
@@ -53,65 +53,73 @@ app.get('/api/download', async (req, res) => {
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  // Danh sách các máy chủ Invidious API chạy ổn định nhất
-  const INVIDIOUS_INSTANCES = [
-    'https://invidious.nerdvpn.de',
-    'https://invidious.drgns.space',
-    'https://inv.us.projectsegfau.lt',
-    'https://invidious.privacyredirect.com',
-    'https://invidious.io.lol'
-  ];
-
-  let videoData = null;
-
-  // Tự động xoay vòng máy chủ nếu có server bị nghẽn
-  for (const instance of INVIDIOUS_INSTANCES) {
-    try {
-      const response = await fetch(`${instance}/api/v1/videos/${videoId}`, {
-        signal: AbortSignal.timeout(5000) // Giới hạn chờ 5 giây cho mỗi server
-      });
-
-      if (response.ok) {
-        videoData = await response.json();
-        break; // Lấy dữ liệu thành công, thoát vòng lặp
-      }
-    } catch (e) {
-      console.log(`Server Invidious (${instance}) bận, đang chuyển server tiếp theo...`);
-    }
-  }
-
-  if (!videoData) {
-    return res.status(500).send('Tất cả máy chủ phân tích đều bận. Vui lòng bấm tải lại sau vài giây.');
-  }
+  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const isMp3 = format === 'mp3';
 
   try {
-    const isMp3 = format === 'mp3';
-    let targetUrl = '';
+    // Bước 1: Gửi yêu cầu phân tích thông tin video
+    const analyzeRes = await fetch('https://www.y2mate.com/chats/analyze', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: new URLSearchParams({
+        url: targetUrl,
+        q_auto: 0,
+        ajax: 1
+      })
+    });
+
+    const analyzeData = await analyzeRes.json();
+
+    if (!analyzeData || analyzeData.status !== 'success' || !analyzeData.links) {
+      return res.status(500).send('Máy chủ phân tích bận. Vui lòng thử lại sau vài giây.');
+    }
+
+    let downloadKey = '';
 
     if (isMp3) {
-      // Lấy stream Audio có chất lượng Bitrate cao nhất từ adaptiveFormats
-      const audioStreams = videoData.adaptiveFormats
-        ?.filter(f => f.type && f.type.startsWith('audio/'))
-        .sort((a, b) => (parseInt(b.bitrate) || 0) - (parseInt(a.bitrate) || 0));
-
-      targetUrl = audioStreams?.[0]?.url;
+      // Lấy key tải MP3 chất lượng tốt nhất
+      const mp3Obj = analyzeData.links.mp3;
+      downloadKey = mp3Obj?.auto?.k || Object.values(mp3Obj || {})[0]?.k;
     } else {
-      // Lấy stream Video kèm sẵn tiếng từ formatStreams
-      const videoStreams = videoData.formatStreams
-        ?.sort((a, b) => (parseInt(b.height) || 0) - (parseInt(a.height) || 0));
-
-      targetUrl = videoStreams?.[0]?.url;
+      // Lấy key tải MP4 (Ưu tiên 720p, 480p, 360p)
+      const mp4Obj = analyzeData.links.mp4;
+      downloadKey = mp4Obj?.['22']?.k || mp4Obj?.['18']?.k || Object.values(mp4Obj || {})[0]?.k;
     }
 
-    if (targetUrl) {
-      // Chuyển hướng người dùng trực tiếp tới link tải của Google CDN
-      return res.redirect(targetUrl);
-    } else {
-      return res.status(500).send('Không tìm thấy đường dẫn tải xuống phù hợp.');
+    if (!downloadKey) {
+      return res.status(500).send('Không tìm thấy link định dạng phù hợp.');
     }
+
+    // Bước 2: Tiến hành Convert để lấy direct link từ CDN
+    const convertRes = await fetch('https://www.y2mate.com/chats/convert', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: new URLSearchParams({
+        vid: videoId,
+        k: downloadKey
+      })
+    });
+
+    const convertData = await convertRes.json();
+
+    if (convertData && convertData.c_status === 'CONVERTED' && convertData.dlink) {
+      // Chuyển hướng trình duyệt/điện thoại người dùng trực tiếp đến file tải
+      return res.redirect(convertData.dlink);
+    } else {
+      return res.status(500).send('Quá trình tạo link tải thất bại. Vui lòng thử lại.');
+    }
+
   } catch (err) {
-    console.error('Lỗi xử lý file:', err);
-    return res.status(500).send('Lỗi máy chủ khi tạo đường dẫn tải.');
+    console.error('Lỗi xử lý API:', err);
+    return res.status(500).send('Lỗi máy chủ khi lấy link tải.');
   }
 });
 
