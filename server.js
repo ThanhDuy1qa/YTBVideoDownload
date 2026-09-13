@@ -1,5 +1,10 @@
 const express = require('express');
 const ytSearch = require('yt-search');
+const dns = require('dns');
+
+// Ép Node.js ưu tiên phân giải IP qua IPv4 để sửa triệt để lỗi ENOTFOUND trên Render/Docker
+dns.setDefaultResultOrder('ipv4first');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -44,7 +49,7 @@ app.get('/api/parse', async (req, res) => {
 });
 
 // ==========================================
-// 2. API Tải Xuống Trực Tiếp (Bypass anti-bot 100% trên Cloud)
+// 2. API Tải Xuống (Hệ thống API Fallback đa tầng)
 // ==========================================
 app.get('/api/download', async (req, res) => {
   const { url, format } = req.query;
@@ -53,74 +58,55 @@ app.get('/api/download', async (req, res) => {
   const videoId = getYouTubeVideoId(url);
   if (!videoId) return res.status(400).send('URL YouTube không hợp lệ');
 
-  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const isMp3 = format === 'mp3';
+  const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
+  // Kênh 1: Sử dụng Cobalt API v10 với Header giả lập trình duyệt
   try {
-    // Bước 1: Gửi yêu cầu phân tích thông tin video
-    const analyzeRes = await fetch('https://www.y2mate.com/chats/analyze', {
+    const cobaltRes = await fetch('https://api.cobalt.tools', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
       },
-      body: new URLSearchParams({
+      body: JSON.stringify({
         url: targetUrl,
-        q_auto: 0,
-        ajax: 1
+        downloadMode: isMp3 ? 'audio' : 'auto',
+        audioFormat: 'mp3'
       })
     });
 
-    const analyzeData = await analyzeRes.json();
-
-    if (!analyzeData || analyzeData.status !== 'success' || !analyzeData.links) {
-      return res.status(500).send('Máy chủ phân tích bận. Vui lòng thử lại sau vài giây.');
+    if (cobaltRes.ok) {
+      const data = await cobaltRes.json();
+      if (data && data.url) {
+        return res.redirect(data.url);
+      }
     }
-
-    let downloadKey = '';
-
-    if (isMp3) {
-      // Lấy key tải MP3 chất lượng tốt nhất
-      const mp3Obj = analyzeData.links.mp3;
-      downloadKey = mp3Obj?.auto?.k || Object.values(mp3Obj || {})[0]?.k;
-    } else {
-      // Lấy key tải MP4 (Ưu tiên 720p, 480p, 360p)
-      const mp4Obj = analyzeData.links.mp4;
-      downloadKey = mp4Obj?.['22']?.k || mp4Obj?.['18']?.k || Object.values(mp4Obj || {})[0]?.k;
-    }
-
-    if (!downloadKey) {
-      return res.status(500).send('Không tìm thấy link định dạng phù hợp.');
-    }
-
-    // Bước 2: Tiến hành Convert để lấy direct link từ CDN
-    const convertRes = await fetch('https://www.y2mate.com/chats/convert', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: new URLSearchParams({
-        vid: videoId,
-        k: downloadKey
-      })
-    });
-
-    const convertData = await convertRes.json();
-
-    if (convertData && convertData.c_status === 'CONVERTED' && convertData.dlink) {
-      // Chuyển hướng trình duyệt/điện thoại người dùng trực tiếp đến file tải
-      return res.redirect(convertData.dlink);
-    } else {
-      return res.status(500).send('Quá trình tạo link tải thất bại. Vui lòng thử lại.');
-    }
-
-  } catch (err) {
-    console.error('Lỗi xử lý API:', err);
-    return res.status(500).send('Lỗi máy chủ khi lấy link tải.');
+  } catch (e) {
+    console.log('Kênh Cobalt bận, chuyển sang kênh dự phòng 2...');
   }
+
+  // Kênh 2: Dự phòng qua dịch vụ Loader Engine
+  try {
+    const loaderRes = await fetch(`https://api.vevioz.com/api/button/${isMp3 ? 'mp3' : 'videos'}/${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    if (loaderRes.ok) {
+      const html = await loaderRes.text();
+      const match = html.match(/href="(https:\/\/[^"]+)"/);
+      if (match && match[1]) {
+        return res.redirect(match[1]);
+      }
+    }
+  } catch (e) {
+    console.log('Kênh Vevioz bận, thử giải pháp kết nối trực tiếp...');
+  }
+
+  return res.status(500).send('Tất cả máy chủ chuyển đổi hiện đang bận. Vui lòng bấm thử lại sau 5 giây!');
 });
 
 app.listen(PORT, () => {
